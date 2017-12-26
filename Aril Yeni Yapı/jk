@@ -1,0 +1,1422 @@
+CREATE OR REPLACE PACKAGE BODY DWH.PKG_CCB_SUBSCRIBERS
+IS
+-------------------------------------------------------------------------------
+--  Created By              : eTAPKAN
+--  Creation Date           : 2017.12.06
+--  Last Modification Date  : 2017.12.06
+--  Package Name            : PKG_CCB_SUBSCRIBERS
+--  Package Version         : 0.0.1
+--  Package Description     : 
+--
+--  [Modification History]
+-------------------------------------------------------------------------------
+
+  -----------------------------------
+  -- Initialize Log Variables      --
+  -----------------------------------
+  gv_job_module       constant varchar2(50)  := 'CCB_SUBSCRIBERS';             -- Job Module Name
+  gv_pck              constant varchar2(50)  := 'PKG_CCB_SUBSCRIBERS';         -- PLSQL Package Name
+  gv_job_owner        constant varchar2(50)  := 'DWH';                       -- Owner of the Job
+  gv_proc             varchar2(100);                                         -- Procedure Name
+
+  gv_sql_errm         varchar2(4000);                                        -- SQL Error Message
+  gv_sql_errc         number;                                                -- SQL Error Code
+  gv_dyn_task         long := '';
+  
+  -- schemas
+  gv_dwh_owner        constant varchar2(30)  := 'DWH';
+  gv_ods_owner        constant varchar2(30)  := 'DWH_ODS';
+  gv_edw_owner        constant varchar2(30)  := 'DWH_EDW';
+  gv_dm_owner         constant varchar2(30)  := 'DWH_DM';
+  gv_mbs_dicle_owner  constant varchar2(30)  := 'DICLE';
+  gv_ods_dicle_owner  constant varchar2(30)  := 'ODS_MBS_DICLE';
+  gv_ods_cbs_owner    constant varchar2(30)  := 'ODS_CBS_MAESTRO_DEDAS';
+  
+  --Dblinks
+  gv_dblk_mbs  varchar2(20) := 'DBLINKORCLMBS_DG';
+  
+
+  ------------------------------------------------------------------------------
+
+  ------------------------------------------------------------------------------
+  --  Created By     : eTAPKAN
+  --  Creation Date  : 2017.12.06
+  --  Last Modification Date  : 2017.12.06
+  --  Procedure Name : PRC_SUBS_0010
+  --  Description    : MBS'deki tesisat,son ihbar tarihleri getiriliyor....
+  --  [Modification History]
+  ------------------------------------------------------------------------------
+
+  
+  PROCEDURE PRC_SUBS_0010
+  IS
+    ----------------------------------------------------------------------------
+    v_table_name    varchar2(35) := 'SUBS0010';
+    ----------------------------------------------------------------------------
+    v_src_table_01  varchar2(30) := 'KESME_IHBAR_TAKIP';
+    ----------------------------------------------------------------------------
+  BEGIN
+    gv_proc := 'PRC_SUBS_0010';
+
+    -- Initialize Log Variables
+    pl.logger := utl.logtype.init(gv_pck ||'.'||gv_proc);
+    
+    pl.drop_table(gv_dwh_owner, v_table_name);
+    
+    
+    gv_dyn_task := '
+      CREATE TABLE '||gv_dwh_owner||'.'||v_table_name||' 
+      PARALLEL NOLOGGING COMPRESS
+      AS      
+      SELECT --+PARALLEL 16
+        TESISAT_NO,MAX(IHBAR_TARIHI) SON_IHBAR_TARIHI
+      FROM 
+      '||gv_mbs_dicle_owner ||'.'||v_src_table_01||'@'||gv_dblk_mbs||' 
+      GROUP BY TESISAT_NO      
+    ';
+
+    execute immediate gv_dyn_task;
+ 
+    pl.logger.success(SQL%ROWCOUNT,gv_dyn_task);
+    
+    commit;
+    
+    exception
+      when others then
+        gv_sql_errc := sqlcode;
+        gv_sql_errm := sqlerrm;
+        pl.logger.error(gv_sql_errm, gv_dyn_task);
+        rollback;
+        raise_application_error(gv_sql_errc, gv_sql_errm);
+         
+  END;
+  
+  
+  ------------------------------------------------------------------------------
+  --  Created By     : eTAPKAN
+  --  Creation Date  : 2017.12.06
+  --  Last Modification Date  : 2017.12.06
+  --  Procedure Name : PRC_SUBS_0020
+  --  Description    : Tesisat son tahakkuk tarihleri getiriliyor.
+  --  [Modification History]
+  ------------------------------------------------------------------------------
+
+  
+  PROCEDURE PRC_SUBS_0020
+  IS
+    ----------------------------------------------------------------------------
+    v_table_name    varchar2(35) := 'SUBS0020';
+    ----------------------------------------------------------------------------
+    v_src_table_01  varchar2(30) := 'MBS_FATURA';
+    ----------------------------------------------------------------------------
+  BEGIN
+    gv_proc := 'PRC_SUBS_0020';
+
+    -- Initialize Log Variables
+    pl.logger := utl.logtype.init(gv_pck ||'.'||gv_proc);
+    
+    pl.drop_table(gv_dwh_owner, v_table_name);
+
+    
+    gv_dyn_task := '
+      CREATE TABLE '||gv_dwh_owner||'.'||v_table_name||' 
+      PARALLEL NOLOGGING COMPRESS
+      AS      
+      SELECT --+PARALLEL 16
+        TESISAT_NO,
+        MAX(TO_DATE(TAHAKKUK_TARIHI,''YYYYMMDD'')) LAST_INVOICE_DATE
+
+      FROM 
+      '||gv_ods_owner ||'.'||v_src_table_01||'
+      WHERE TAHAKKUK_TARIHI != 0
+      AND FATURA_KODU NOT IN (2,9)
+      GROUP BY TESISAT_NO
+    ';
+
+    execute immediate gv_dyn_task;
+    
+    pl.logger.success(SQL%ROWCOUNT,gv_dyn_task);
+    
+    commit;
+    
+    exception
+      when others then
+        gv_sql_errc := sqlcode;
+        gv_sql_errm := sqlerrm;
+        pl.logger.error(gv_sql_errm, gv_dyn_task);
+        rollback;
+        raise_application_error(gv_sql_errc, gv_sql_errm);
+          
+  END;
+
+
+
+  ------------------------------------------------------------------------------
+  --  Created By     : eTAPKAN
+  --  Creation Date  : 2017.12.06
+  --  Last Modification Date  : 2017.12.06
+  --  Procedure Name : PRC_SUBS_0030
+  --  Description    : Tesisat  son okuma tarihi getiriliyor...
+  --  [Modification History]
+  ------------------------------------------------------------------------------
+
+  
+  PROCEDURE PRC_SUBS_0030
+  IS
+    ----------------------------------------------------------------------------
+    v_table_name    varchar2(35) := 'SUBS0030';
+    ----------------------------------------------------------------------------
+    v_src_table_01  varchar2(30) := 'ENDEKS_NOT';
+    ----------------------------------------------------------------------------
+  BEGIN
+    gv_proc := 'PRC_SUBS_0030';
+
+    -- Initialize Log Variables
+    pl.logger := utl.logtype.init(gv_pck ||'.'||gv_proc);
+    
+    pl.drop_table(gv_dwh_owner, v_table_name);
+
+    
+    gv_dyn_task := '
+      CREATE TABLE '||gv_dwh_owner||'.'||v_table_name||' 
+      PARALLEL NOLOGGING COMPRESS
+      AS      
+      WITH OKUMA_GETIR AS (
+            SELECT --+PARALLEL 16
+            ROW_NUMBER() OVER (PARTITION BY TESISAT_NO  ORDER BY OKUMA_TARIHI DESC) CNT,
+            TESISAT_NO,
+            NOT_KODU, 
+            OKUMA_TARIHI 
+            FROM 
+      '||gv_mbs_dicle_owner ||'.'||v_src_table_01||'@'||gv_dblk_mbs||' 
+    )
+    SELECT TESISAT_NO,NOT_KODU,OKUMA_TARIHI 
+    FROM OKUMA_GETIR 
+    WHERE CNT=1
+    ';
+
+    execute immediate gv_dyn_task;
+ 
+    pl.logger.success(SQL%ROWCOUNT,gv_dyn_task);
+    
+    commit;
+    
+    exception
+      when others then
+        gv_sql_errc := sqlcode;
+        gv_sql_errm := sqlerrm;
+        pl.logger.error(gv_sql_errm, gv_dyn_task);
+        rollback;
+        raise_application_error(gv_sql_errc, gv_sql_errm);
+          
+  END;
+
+
+
+  ------------------------------------------------------------------------------
+  --  Created By     : eTAPKAN
+  --  Creation Date  : 2017.12.06
+  --  Last Modification Date  : 2017.12.06
+  --  Procedure Name : PRC_SUBS_0040
+  --  Description    : Tesisat CBS verileri getiriliyor...
+  --  [Modification History]
+  ------------------------------------------------------------------------------
+
+  
+  PROCEDURE PRC_SUBS_0040
+  IS
+    ----------------------------------------------------------------------------
+    v_table_name    varchar2(35) := 'SUBS0040';
+    ----------------------------------------------------------------------------
+    v_src_table_01  varchar2(30) := 'ADR_ABONE';
+    v_src_table_02  varchar2(30) := 'ADR_BINA';
+    v_src_table_03  varchar2(30) := 'ADR_IL';
+    v_src_table_04  varchar2(30) := 'ADR_ILCE';
+    v_src_table_05  varchar2(30) := 'ADR_MAHALLE';
+    v_src_table_06  varchar2(30) := 'ADR_MAHALLE_SOKAK';
+    ----------------------------------------------------------------------------
+  BEGIN
+    gv_proc := 'PRC_SUBS_0040';
+    
+    
+    -- Initialize Log Variables
+    pl.logger := utl.logtype.init(gv_pck ||'.'||gv_proc);
+    
+    pl.drop_table(gv_dwh_owner, v_table_name);
+
+    gv_dyn_task := '
+      CREATE TABLE '||gv_dwh_owner||'.'||v_table_name||' 
+      PARALLEL NOLOGGING COMPRESS
+      AS      
+      WITH CBS_GETIR AS 
+        (SELECT --+PARALLEL (A,16)
+                COUNT(1) OVER (PARTITION BY TO_NUMBER(A.TESISAT_NO)) CNT,
+                TRIM(B.ADR_IL_ID)||TRIM(B.ID) BUILDING_ID,
+                TRIM(A.ID) ABONE_ID,
+                TRIM(A.TESISAT_NO) SUBSCRIBER_ID,
+                TRIM(A.IC_KAPI_NO) INTERIOR_DOOR_NUMBER,
+                TRIM(A.ENERJI_TABLO_KAYIT_KODU) TRANSFORMER_NAME,
+                TRIM(A.DIREK_BOX_NO) POLE_BOX_NUMBER,
+                TRIM(A.X_KOORDINAT) LATITUDE, 
+                TRIM(A.Y_KOORDINAT) LONGITUDE,
+                TRIM(B.ADI) BUILDING_NAME,
+                TRIM(B.ID) BUILDING_TYPE,
+                TRIM(B.KAPI_NO) DOOR_NUMBER,
+                TRIM(B.SITE_ADI) SITE_NAME,
+                TRIM(B.BINA_KAT_SAYISI) FLOOR_COUNT,
+                TRIM(B.DAIRE_SAYISI) FLAT_COUNT,
+                TRIM(B.ENERJI_TABLO_KAYIT_KODU) TRANSFORMER_NUMBER ,
+                TRIM(M.ADI) NEIGHBORHOOD,
+                TRIM(I.ADI) CBS_PROVINCE,
+                TRIM(C.ADI) CBS_DISTRICT,
+                TRIM(S.ADI) STREET,
+                TRIM(S.ADR_IL_SOKAK_KODU) STREET_CODE,
+                TRIM(B.YOLBIL_ID) WAY_ID
+          FROM 
+          '||gv_ods_cbs_owner ||'.'||v_src_table_01||' A,
+          '||gv_ods_cbs_owner ||'.'||v_src_table_02||' B,
+          '||gv_ods_cbs_owner ||'.'||v_src_table_03||' I,
+          '||gv_ods_cbs_owner ||'.'||v_src_table_04||' C,
+          '||gv_ods_cbs_owner ||'.'||v_src_table_05||' M,
+          '||gv_ods_cbs_owner ||'.'||v_src_table_06||' S
+          WHERE DWH_CONFIG.IS_NUMERIC(A.TESISAT_NO)=1 
+          AND A.ADR_BINA_ID = B.ID (+)
+          AND B.ADR_IL_ID = I.ID (+)
+          AND B.ADR_ILCE_ID = C.ID (+) 
+          AND B.ADR_MAHALLE_ID = M.ID (+)
+          AND B.ADR_MAHALLE_SOKAK_ID = S.ID (+)
+        )
+         SELECT 
+             BUILDING_ID,
+             ABONE_ID,
+             TO_NUMBER(SUBSCRIBER_ID) SUBSCRIBER_ID,
+             INTERIOR_DOOR_NUMBER,
+             TRANSFORMER_NAME,
+             POLE_BOX_NUMBER,
+             LATITUDE,
+             LONGITUDE,
+             BUILDING_NAME,
+             BUILDING_TYPE,
+             DOOR_NUMBER,
+             SITE_NAME,
+             FLOOR_COUNT,
+             FLAT_COUNT,
+             TRANSFORMER_NUMBER,
+             NEIGHBORHOOD,
+             CBS_PROVINCE,
+             CBS_DISTRICT,
+             STREET,
+             STREET_CODE,
+             WAY_ID
+         FROM CBS_GETIR WHERE CNT=1
+    ';
+
+    execute immediate gv_dyn_task;
+    
+    pl.logger.success(SQL%ROWCOUNT,gv_dyn_task);
+    
+    commit;
+    
+    exception
+      when others then
+        gv_sql_errc := sqlcode;
+        gv_sql_errm := sqlerrm;
+        pl.logger.error(gv_sql_errm, gv_dyn_task);
+        rollback;
+        raise_application_error(gv_sql_errc, gv_sql_errm);
+        
+  END;
+
+
+  ------------------------------------------------------------------------------
+  --  Created By     : eTAPKAN
+  --  Creation Date  : 2017.12.06
+  --  Last Modification Date  : 2017.12.06
+  --  Procedure Name : PRC_SUBS_0050
+  --  Description    : ARL tesisatları getiriliyor...
+  --  [Modification History]
+  ------------------------------------------------------------------------------
+
+  
+  PROCEDURE PRC_SUBS_0050
+  IS
+    ----------------------------------------------------------------------------
+    v_table_name    varchar2(35) := 'SUBS0050';
+    ----------------------------------------------------------------------------
+    v_src_table_01  varchar2(30) := 'AMR_ALL_DETAILS_ARIL';
+    ----------------------------------------------------------------------------
+  BEGIN
+    gv_proc := 'PRC_SUBS_0050';
+
+    -- Initialize Log Variables
+    pl.logger := utl.logtype.init(gv_pck ||'.'||gv_proc);
+    
+    pl.drop_table(gv_dwh_owner, v_table_name);
+
+    
+    gv_dyn_task := '
+      CREATE TABLE '||gv_dwh_owner||'.'||v_table_name||' 
+      PARALLEL NOLOGGING COMPRESS
+      AS      
+        WITH GET_AMR AS (
+            SELECT --+PARALLEL 16
+            COUNT(1) OVER (PARTITION BY TO_NUMBER(AMR_INSTALLATION_ID)) CNT,
+            TO_NUMBER(AMR_INSTALLATION_ID) SUBSCRIBER_ID      
+        FROM 
+        '||gv_edw_owner ||'.'||v_src_table_01||' 
+        WHERE DWH_CONFIG.IS_NUMERIC(AMR_INSTALLATION_ID) = 1
+    )
+    SELECT SUBSCRIBER_ID
+    FROM GET_AMR  
+    WHERE CNT=1
+    ';
+
+    execute immediate gv_dyn_task;
+    
+    pl.logger.success(SQL%ROWCOUNT,gv_dyn_task);
+    
+    commit;
+    
+    exception
+      when others then
+        gv_sql_errc := sqlcode;
+        gv_sql_errm := sqlerrm;
+        pl.logger.error(gv_sql_errm, gv_dyn_task);
+        rollback;
+        raise_application_error(gv_sql_errc, gv_sql_errm);
+          
+  END;
+  
+
+  ------------------------------------------------------------------------------
+  --  Created By     : eTAPKAN
+  --  Creation Date  : 2017.12.06
+  --  Last Modification Date  : 2017.12.06
+  --  Procedure Name : PRC_SUBS_0050
+  --  Description    : Tesisat  son okuma tarihi getiriliyor...
+  --  [Modification History]
+  ------------------------------------------------------------------------------
+
+  
+  PROCEDURE PRC_SUBS_0060
+  IS
+    ----------------------------------------------------------------------------
+    v_table_name    varchar2(35) := 'SUBS0060';
+    ----------------------------------------------------------------------------
+    v_src_table_01  varchar2(30) := 'SBK_TRAFOBINATIP';
+    v_src_table_02  varchar2(30) := 'INV_GEN_DEVICE';
+    ----------------------------------------------------------------------------
+  BEGIN
+    gv_proc := 'PRC_SUBS_0060';
+
+    -- Initialize Log Variables
+    pl.logger := utl.logtype.init(gv_pck ||'.'||gv_proc);
+    
+    pl.drop_table(gv_dwh_owner, v_table_name);
+
+    
+    gv_dyn_task := '
+      CREATE TABLE '||gv_dwh_owner||'.'||v_table_name||' 
+      PARALLEL NOLOGGING COMPRESS
+      AS      
+       WITH GET_FEEDER AS (
+            SELECT 
+                COUNT(1) OVER (PARTITION BY  TRIM(A.TESISAT_NO) ORDER BY A.ID DESC) CNT, 
+                A.ID TRANSFORMER_ID, 
+                TO_NUMBER(A.TESISAT_NO) SUBSCRIBER_ID, 
+                A.KODU NEW_TRASFORMER_CODE, 
+                B.SEGMENT_ID FEEDER_ID 
+           FROM 
+        '||gv_ods_cbs_owner ||'.'||v_src_table_01||' A,
+        '||gv_ods_owner ||'.'||v_src_table_02||' B
+        WHERE DWH_CONFIG.IS_NUMERIC(A.TESISAT_NO) = 1 
+        AND A.ANALIZOR_CIHAZ_ID IS NOT NULL
+        AND A.ANALIZOR_CIHAZ_ID = B.ID (+)
+    )
+    SELECT TRANSFORMER_ID,SUBSCRIBER_ID,
+    NEW_TRASFORMER_CODE,FEEDER_ID
+    FROM GET_FEEDER 
+    WHERE CNT = 1
+    ';
+
+    execute immediate gv_dyn_task;
+    
+    pl.logger.success(SQL%ROWCOUNT,gv_dyn_task);
+    
+    commit;
+    
+    exception
+      when others then
+        gv_sql_errc := sqlcode;
+        gv_sql_errm := sqlerrm;
+        pl.logger.error(gv_sql_errm, gv_dyn_task);
+        rollback;
+        raise_application_error(gv_sql_errc, gv_sql_errm);
+         
+  END;
+
+
+  ------------------------------------------------------------------------------
+  --  Created By     : eTAPKAN
+  --  Creation Date  : 2017.12.06
+  --  Last Modification Date  : 2017.12.06
+  --  Procedure Name : PRC_SUBS_0050
+  --  Description    : Tesisat osos poles bilgileri getiriliyor...
+  --  [Modification History]
+  ------------------------------------------------------------------------------
+ 
+  PROCEDURE PRC_SUBS_0070
+  IS
+    ----------------------------------------------------------------------------
+    v_table_name    varchar2(35) := 'SUBS0070';
+    ----------------------------------------------------------------------------
+    v_src_table_01  varchar2(30) := 'OSS_AMR_WIRINGS';
+    v_src_table_02  varchar2(30) := 'OSS_AMR_WIRINGDETAILS';
+    v_src_table_03  varchar2(30) := 'D_POLES';
+    ----------------------------------------------------------------------------
+  BEGIN
+    gv_proc := 'PRC_SUBS_0070';
+
+    -- Initialize Log Variables
+    pl.logger := utl.logtype.init(gv_pck ||'.'||gv_proc);
+    
+    pl.drop_table(gv_dwh_owner, v_table_name);
+
+    
+    gv_dyn_task := '
+      CREATE TABLE '||gv_dwh_owner||'.'||v_table_name||' 
+      PARALLEL NOLOGGING COMPRESS
+      AS      
+      WITH GET_POLES AS (
+            SELECT 
+            COUNT(1) OVER(PARTITION BY TO_NUMBER(W.WIRINGNO) ) CNT, 
+            TO_NUMBER(W.WIRINGNO) SUBSCRIBER_ID,
+            NVL(W.PANOTYPE,0) CBS_LAYER_TYPE_ID,P.POLE_ID
+           FROM 
+        '||gv_ods_owner ||'.'||v_src_table_01||' W,
+        '||gv_ods_owner ||'.'||v_src_table_02||' D,
+        '||gv_edw_owner ||'.'||v_src_table_03||' P
+        WHERE W.WIRINGID = D.WIRINGID
+        AND P.POLE_ID = SUBSTR(DBMS_LOB.SUBSTR(D.PHYSICALGROUPTREENAMES,4000,1),1,INSTR(DBMS_LOB.SUBSTR(D.PHYSICALGROUPTREENAMES,4000,1),'' '')-1)|| TO_NUMBER(W.PANONO) 
+        AND P.TYPE_ID = NVL(W.PANOTYPE,0)
+        AND W.RECORDSTATUS =''A''
+        AND DWH_CONFIG.IS_NUMERIC(W.PANONO) = 1 
+        AND D.RECORDSTATUS  = ''A''  
+        AND D.DUMMYSTATUS = 0
+        AND W.PANOTYPE IN (1, 2, 3)
+    )
+    SELECT SUBSCRIBER_ID,POLE_ID
+    FROM GET_POLES
+    WHERE CNT = 1
+    ';
+
+    execute immediate gv_dyn_task;
+    
+    pl.logger.success(SQL%ROWCOUNT,gv_dyn_task);
+    
+    commit;
+    
+    exception
+      when others then
+        gv_sql_errc := sqlcode;
+        gv_sql_errm := sqlerrm;
+        pl.logger.error(gv_sql_errm, gv_dyn_task);
+        rollback;
+        raise_application_error(gv_sql_errc, gv_sql_errm);
+        
+  END;
+  
+  
+  ------------------------------------------------------------------------------
+  --  Created By     : eTAPKAN
+  --  Creation Date  : 2017.12.06
+  --  Last Modification Date  : 2017.12.06
+  --  Procedure Name : PRC_SUBS_0050
+  --  Description    : Master  bilgileri oluşturuluyor...
+  --  [Modification History]
+  ------------------------------------------------------------------------------
+ 
+  PROCEDURE PRC_SUBS_0080
+  IS
+    ----------------------------------------------------------------------------
+    v_table_name    varchar2(35) := 'SUBS0080';
+    ----------------------------------------------------------------------------
+    v_src_table_01  varchar2(30) := 'MASTER ';
+    v_src_table_02  varchar2(30) := 'MASTER_GECERLI_TARIFE ';
+    v_src_table_03  varchar2(30) := 'BELEDIYELER';
+    v_src_table_04  varchar2(30) := 'KARNELER';
+    v_src_table_05  varchar2(30) := 'SANAYI_BOLGE';
+    v_src_table_06  varchar2(30) := 'TARIFELER';
+    v_src_table_07  varchar2(30) := 'MUH_ALICI_HESAPLAR';
+    v_src_table_08  varchar2(30) := 'UNIPEDLER';
+    v_src_table_09  varchar2(30) := 'SAYAC';
+    v_src_table_10  varchar2(30) := 'KESME_TAKIP';
+    v_src_table_11  varchar2(30) := 'FATURA_BORC_ICMAL';
+    v_src_table_12  varchar2(30) := 'SOZLESME';
+    v_src_table_13  varchar2(30) := 'ENERJI_TUKETICI_TESISAT';
+    v_src_table_14  varchar2(30) := 'ENERJI_TUKETICILER';
+    v_src_table_15  varchar2(30) := 'ENERJI_SATICILAR';
+    v_src_table_16  varchar2(30) := 'REAKTIF_ISTISNA';
+    v_src_table_17  varchar2(30) := 'SUBS0010';
+    
+    ----------------------------------------------------------------------------
+  BEGIN
+    gv_proc := 'PRC_SUBS_0080';
+
+    -- Initialize Log Variables
+    pl.logger := utl.logtype.init(gv_pck ||'.'||gv_proc);
+    
+    pl.drop_table(gv_dwh_owner, v_table_name);
+
+    
+    gv_dyn_task := '
+      CREATE TABLE '||gv_dwh_owner||'.'||v_table_name||' 
+      PARALLEL NOLOGGING COMPRESS
+      AS 
+      SELECT     
+        M.TESISAT_NO SUBSCRIBER_ID,
+        TRIM(M.UNVAN) NAME,
+        K.KARNE_NO RATION_CARD_ID,
+        K.ADRES RATION_CARD_NAME,
+        --------------------------------------------------------------------------------------------------------------
+        CASE WHEN NVL(K.KOY_DUR,0) = 1 THEN K.KARNE_NO ELSE 0 END VILLAGE_CODE,
+        --------------------------------------------------------------------------------------------------------------
+        CASE WHEN NVL(K.KOY_DUR,0) = 1 THEN K.ADRES ELSE '''' END VILLAGE_NAME,
+        --------------------------------------------------------------------------------------------------------------
+        M.KESME_NO CUTTING_NO,
+        TO_DATE(DECODE(M.SON_OKUMA_TARIHI,''0'',NULL,M.SON_OKUMA_TARIHI),''YYYYMMDD'') LAST_READING_DATE,
+        M.SOZLESME_GUCU CONTRACT_POWER,
+        TRIM(M.ADRES) ADDRESS,
+        --B.BOLGE_KODU AREA_CODE,
+        --TRIM(B.BOLGE_ADI) AREA_NAME,
+        BL.BELEDIYE_KODU MUNICIPALITY_CODE,
+        TRIM(BL.BELEDIYE_ADI) MUNICIPALITY_NAME,
+        M.TARIFE_KODU TARIFF_CODE,
+        M.KURULU_GUC INSTALLED_POWER,
+        M.TRAFO_GUCU TRANSFORMER_POWER,
+        S.SAYAC_NO METER_NUMBER,
+        S.CARPAN METER_MULTIPLIER,
+        S.MARKA METER_MODEL,
+        TO_DATE(DECODE(NVL(S.TAKILMA_TARIHI,0),0,NULL,S.TAKILMA_TARIHI),''YYYYMMDD'')  LAST_METER_ADD_DATE,
+        U.HESAP_KODU SUBSCRIBER_GROUP_CODE, 
+        TRIM(U.ABONE_GRUP_ADI) SUBSCRIBER_GROUP_NAME,
+        TRIM(T.TARIFE_ADI) TARIFF_NAME,
+        MGT.UNIPED_KODU UNIPED_CODE, 
+        TRIM(UNI.UNIPED_ADI) UNIPED_NAME,
+        TRIM(G.ABONE_GRUP_ADI) AS G_SUBSCRIBER_GROUP_NAME,
+        NVL(K.KOY_DUR,0) AS VILLAGE_STATU,
+        MM.HESAP_KODU AS ACCOUNT_CODE ,
+        TRIM(MM.HESAP_ADI) AS ACCOUNT_NAME,
+        MGT.SOZLESME_NO CONTRAC_NUMBER,
+        CASE WHEN NVL(M.KESME_DUR,0)<> 0 THEN 4 ELSE 0 END CUT_STATUS,
+        TO_DATE(DECODE(NVL(KT.KESME_TARIHI,0),0,NULL,KT.KESME_TARIHI),''YYYYMMDD'')  CUT_STATUS_DATE,
+        CAST(NULL AS VARCHAR2(100)) CUT_STATUS_NAME, 
+        TO_DATE(DECODE(NVL(FI.DEVIR_TARIHI,0),0,NULL,FI.DEVIR_TARIHI),''YYYYMMDD'')  TRANSFER_DATE,
+        TO_DATE(DECODE(NVL(KI.SON_IHBAR_TARIHI,0),0,NULL,KI.SON_IHBAR_TARIHI),''YYYYMMDD'') LAST_NOTICE_DATE, 
+        M.KESME_NO CUT_NUMBER,
+        --------------------------------------------------------------------------------------------------------------   
+        CASE  WHEN M.ACIK_KAPALI_DUR = 2 THEN 4 
+        WHEN K2.KARNE_NO  IS NOT NULL THEN 3 
+        WHEN SZ.SOZLESME_NO IS NOT NULL THEN 1 
+        ELSE 0 
+        END ACTIVE_SUBSCRIBER ,
+        --------------------------------------------------------------------------------------------------------------
+        SZT.SOZLESME_TARIHI CONTRACT_START_DATE ,
+        M.TELEFON_KOD || '' '' || LPAD (M.TELEFON_NO, 7, 0) PHONE,
+        M.TELEFON2_KOD || '' '' || LPAD (M.TELEFON2_NO, 7, 0) PHONE_2,
+        M.CEP_TEL_KOD || '' '' || LPAD (M.CEP_TEL_NO, 7, 0) MOBILE_PHONE,
+        NVL (M.TC_KIMLIK_NO, '''') TC_IDENTITY_NUMBER,
+        M.VERGI_NO TAX_NUMBER,
+        M.ORTALAMA_TUKETIM AVG_CONSUMPTION,
+        --------------------------------------------------------------------------------------------------------------  
+        CASE WHEN NVL (M.OSOS_DUR, 0) = 0 THEN ''Hayır'' ELSE ''Evet'' END OSOS_STATUS,
+        --------------------------------------------------------------------------------------------------------------  
+        CASE WHEN M.OG_DUR = 1 THEN ''OG'' ELSE ''AG'' END OG_STATUS,
+        -------------------------------------------------------------------------------------------------------------- 
+        CASE WHEN NVL (M.TEDARIK_DUR, 0) != 3 
+            AND T2.HAZINE_ODEME_DUR = 1 
+        THEN ''Genel Ayd.''
+        WHEN ETT.TESISAT_NO = M.TESISAT_NO 
+            AND NVL (M.TEDARIK_DUR, 0) != 3 
+            AND (NVL (ETT.BITIS_TARIHI, 0) = 0 OR NVL (ETT.BITIS_TARIHI, 0) > TO_NUMBER ( TO_CHAR (SYSDATE, ''YYYYMMDD'')))
+            AND NVL (ES.SATICI_KODU, 0) = 6452  
+        THEN ''K2 Abonesi''
+        WHEN ETT.TESISAT_NO = M.TESISAT_NO 
+            AND NVL (M.TEDARIK_DUR, 0) != 3 
+            AND (NVL (ETT.BITIS_TARIHI, 0) = 0 OR NVL (ETT.BITIS_TARIHI, 0) > TO_NUMBER ( TO_CHAR (SYSDATE, ''YYYYMMDD'')))
+            AND NVL (ES.SATICI_KODU, 0) != 6452
+        THEN ''K3 Abonesi'' 
+        WHEN NVL (M.TEDARIK_DUR, 0) = 3 
+        THEN ''K4 Abonesi'' 
+        ELSE ''K1 Abonesi'' END SUBSCRIBER_KIND,
+        --------------------------------------------------------------------------------------------------------------
+        M.ADRES_TARIF ADDRESS_TELL,
+        --------------------------------------------------------------------------------------------------------------   
+        CASE WHEN NVL (M.BAGLANTI_DUR, 0) = 1 THEN ''1.Nolu Bağlanti''
+            WHEN NVL (M.BAGLANTI_DUR, 0) = 2 THEN ''2.Nolu Bağlanti''
+            WHEN NVL (M.BAGLANTI_DUR, 0) = 3 THEN ''3.Nolu Bağlanti''
+            WHEN NVL (M.BAGLANTI_DUR, 0) = 0 THEN ''4.Nolu Bağlanti''
+        END CONNECTION_STATUS,
+        --------------------------------------------------------------------------------------------------------------
+        M.SAHIS_DUR AS PERSON_STATE,
+        --------------------------------------------------------------------------------------------------------------
+         CASE
+            WHEN SZT.TALEP_KODU=1 AND SZT.DEVIR_DUR=0 THEN 1 --Yeni Abone
+            WHEN SZT.TALEP_KODU=0 AND SZT.DEVIR_DUR=1 THEN 2 --Devir
+            WHEN SZT.TALEP_KODU=2 AND SZT.DEVIR_DUR=0 THEN 3 --Güç Artırımı
+            WHEN SZT.TALEP_KODU=2 AND SZT.DEVIR_DUR=1 THEN 4 --Güç Artırımı + Devir
+            WHEN SZT.TALEP_KODU=4 AND SZT.DEVIR_DUR=1 THEN 5 --Şube Değişimi + Devir
+            WHEN SZT.TALEP_KODU=4 AND SZT.DEVIR_DUR=0 THEN 6 --Şube Değişimi
+            WHEN SZT.TALEP_KODU=3 AND SZT.DEVIR_DUR=1 THEN 7 --Güç Azltımı +Devir 
+            WHEN SZT.TALEP_KODU=3 AND SZT.DEVIR_DUR=0 THEN 8 --Güç Azltımı
+            WHEN SZT.TALEP_KODU=0 AND SZT.DEVIR_DUR=0 THEN 9 --Tarife Değ. 
+            ELSE 0 --Belli Değil
+         END AS CONTRACT_TYPE,
+        -------------------------------------------------------------------------------------------------------------- 
+        CASE WHEN R.TESISAT_NO > 0 THEN ''Evet'' ELSE ''Hayır'' END REAKTIF_MUAF,
+        --------------------------------------------------------------------------------------------------------------
+        CASE WHEN K.BOLGE_KODU >= 90 AND NVL(SB.BOLGE_KODU,0)>0 THEN SB.BOLGE_KODU ELSE K.BOLGE_KODU END AREA_CODE,
+        K.BOLGE_KODU K_AREA_CODE
+    
+        FROM  '||gv_mbs_dicle_owner ||'.'||v_src_table_01||'@'||gv_dblk_mbs||' M
+        LEFT JOIN '||gv_mbs_dicle_owner ||'.'||v_src_table_02||'@'||gv_dblk_mbs||' MGT ON (M.TESISAT_NO = MGT.TESISAT_NO)
+        LEFT JOIN '||gv_mbs_dicle_owner ||'.'||v_src_table_03||'@'||gv_dblk_mbs||' BL  ON (MGT.BELEDIYE_KODU = BL.BELEDIYE_KODU )
+        LEFT JOIN '||gv_mbs_dicle_owner ||'.'||v_src_table_04||'@'||gv_dblk_mbs||' K   ON (MGT.KARNE_NO = K.KARNE_NO)
+        LEFT JOIN '||gv_mbs_dicle_owner ||'.'||v_src_table_05||'@'||gv_dblk_mbs||' SB  ON (MGT.TESISAT_NO = SB.TESISAT_NO)
+        LEFT JOIN '||gv_mbs_dicle_owner ||'.'||v_src_table_06||'@'||gv_dblk_mbs||' T   ON (MGT.GECERLI_TARIFE_KODU = T.TARIFE_KODU)
+        LEFT JOIN '||gv_mbs_dicle_owner ||'.'||v_src_table_06||'@'||gv_dblk_mbs||' T1  ON (MGT.TARIFE_KODU = T1.TARIFE_KODU)
+        LEFT JOIN '||gv_mbs_dicle_owner ||'.'||v_src_table_06||'@'||gv_dblk_mbs||' T2  ON (MGT.GECERLI_TARIFE_KODU = T2.TARIFE_KODU)
+        LEFT JOIN '||gv_mbs_dicle_owner ||'.'||v_src_table_07||'@'||gv_dblk_mbs||' G   ON (T.TARIFE_TIPI = G.HESAP_KODU)
+        LEFT JOIN '||gv_mbs_dicle_owner ||'.'||v_src_table_07||'@'||gv_dblk_mbs||' U   ON (T1.TARIFE_TIPI = U.HESAP_KODU)
+        LEFT JOIN '||gv_mbs_dicle_owner ||'.'||v_src_table_07||'@'||gv_dblk_mbs||' MM  ON (MGT.HESAP_KODU = MM.HESAP_KODU AND MGT.HESAP_KODU > 0) 
+        LEFT JOIN '||gv_mbs_dicle_owner ||'.'||v_src_table_08||'@'||gv_dblk_mbs||' UNI ON (MGT.UNIPED_KODU = UNI.UNIPED_KODU)
+        LEFT JOIN '||gv_mbs_dicle_owner ||'.'||v_src_table_09||'@'||gv_dblk_mbs||' S   ON (M.TESISAT_NO = S.TESISAT_NO AND S.SAYAC_KODU = 1)
+        LEFT JOIN '||gv_mbs_dicle_owner ||'.'||v_src_table_10||'@'||gv_dblk_mbs||' KT  ON (M.TESISAT_NO = KT.TESISAT_NO AND M.KESME_NO = KT.KESME_NO)
+        LEFT JOIN '||gv_mbs_dicle_owner ||'.'||v_src_table_11||'@'||gv_dblk_mbs||' FI  ON (M.TESISAT_NO = FI.TESISAT_NO)
+        LEFT JOIN '||gv_mbs_dicle_owner ||'.'||v_src_table_12||'@'||gv_dblk_mbs||' SZ  ON (M.TESISAT_NO = SZ.TESISAT_NO AND M.SOZLESME_NO  = SZ.SOZLESME_NO AND SZ.IPTAL_TARIHI>0 )
+        LEFT JOIN '||gv_mbs_dicle_owner ||'.'||v_src_table_04||'@'||gv_dblk_mbs||' K2  ON (M.KARNE_NO = K2.KARNE_NO AND K2.KULLANIM_DUR = 0)
+        LEFT JOIN '||gv_mbs_dicle_owner ||'.'||v_src_table_12||'@'||gv_dblk_mbs||' SZT ON (M.TESISAT_NO = SZT.TESISAT_NO AND M.SOZLESME_NO = SZT.SOZLESME_NO)
+        LEFT JOIN '||gv_mbs_dicle_owner ||'.'||v_src_table_13||'@'||gv_dblk_mbs||' ETT ON (M.TESISAT_NO = ETT.TESISAT_NO)
+        LEFT JOIN '||gv_mbs_dicle_owner ||'.'||v_src_table_14||'@'||gv_dblk_mbs||' ET  ON (ETT.TUKETICI_KODU = ET.TUKETICI_KODU)
+        LEFT JOIN '||gv_mbs_dicle_owner ||'.'||v_src_table_15||'@'||gv_dblk_mbs||' ES  ON (ET.SATICI_KODU = ES.SATICI_KODU)
+        LEFT JOIN '||gv_mbs_dicle_owner ||'.'||v_src_table_16||'@'||gv_dblk_mbs||' R   ON (M.TESISAT_NO = R.TESISAT_NO)
+        LEFT JOIN '||gv_dwh_owner ||'.'||v_src_table_17||' KI                          ON (M.TESISAT_NO = KI.TESISAT_NO)
+    ';
+
+
+    execute immediate gv_dyn_task;
+    
+    pl.logger.success(SQL%ROWCOUNT,gv_dyn_task);
+    
+    commit;
+    
+    exception
+      when others then
+        gv_sql_errc := sqlcode;
+        gv_sql_errm := sqlerrm;
+        pl.logger.error(gv_sql_errm, gv_dyn_task);
+        rollback;
+        raise_application_error(gv_sql_errc, gv_sql_errm);
+        
+  END;
+  
+  
+
+  ------------------------------------------------------------------------------
+  --  Created By     : eTAPKAN
+  --  Creation Date  : 2017.12.06
+  --  Last Modification Date  : 2017.12.06
+  --  Procedure Name : PRC_SUBS_0050
+  --  Description    :  2.Kesme Kontrol Durumu Düzenleniyor...
+  --  [Modification History]
+  ------------------------------------------------------------------------------
+ 
+  PROCEDURE PRC_SUBS_0090
+  IS
+    ----------------------------------------------------------------------------
+    v_table_name    varchar2(35) := 'SUBS0080';
+    ----------------------------------------------------------------------------
+    v_src_table_01  varchar2(30) := 'SAHA_ISEMRI';
+
+    ----------------------------------------------------------------------------
+  BEGIN
+    gv_proc := 'PRC_SUBS_0090';
+  
+    -- Initialize Log Variables
+    pl.logger := utl.logtype.init(gv_pck ||'.'||gv_proc);
+    
+    
+    gv_dyn_task := '
+    MERGE INTO '||gv_dwh_owner ||'.'||v_table_name||' A 
+    USING 
+    (
+        SELECT MAX(TO_DATE(DECODE(NVL(I.KAYIT_TARIHI,0),0,NULL,I.KAYIT_TARIHI),''YYYYMMDD'')) D_DATE,
+        TESISAT_NO SUBSCRIBER_ID
+        FROM '||gv_mbs_dicle_owner ||'.'||v_src_table_01||'@'||gv_dblk_mbs||' I 
+        WHERE  EMIR_TURU=3 
+        AND EMIR_DUR IN (0,1)
+        GROUP BY TESISAT_NO 
+    ) B ON (A.SUBSCRIBER_ID = B.SUBSCRIBER_ID)
+    WHEN MATCHED THEN UPDATE SET 
+        A.CUT_STATUS = 5,
+        A.CUT_STATUS_DATE = B.D_DATE
+    WHERE  A.CUT_STATUS = 4
+    ';
+
+    execute immediate gv_dyn_task;
+    
+    pl.logger.success(SQL%ROWCOUNT,gv_dyn_task);
+    
+    commit;
+    
+    exception
+      when others then
+        gv_sql_errc := sqlcode;
+        gv_sql_errm := sqlerrm;
+        pl.logger.error(gv_sql_errm, gv_dyn_task);
+        rollback;
+        raise_application_error(gv_sql_errc, gv_sql_errm);
+         
+  END;
+  
+  
+  ------------------------------------------------------------------------------
+  --  Created By     : eTAPKAN
+  --  Creation Date  : 2017.12.06
+  --  Last Modification Date  : 2017.12.06
+  --  Procedure Name : PRC_SUBS_0050
+  --  Description    :  Kontrol 2.Kesme Yapılanlar Düzenleniyor...
+  --  [Modification History]
+  ------------------------------------------------------------------------------
+ 
+  PROCEDURE PRC_SUBS_0100
+  IS
+    ----------------------------------------------------------------------------
+    v_table_name    varchar2(35) := 'SUBS0080';
+    ----------------------------------------------------------------------------
+    v_src_table_01  varchar2(30) := 'SAHA_ISEMRI';
+
+    ----------------------------------------------------------------------------
+  BEGIN
+    gv_proc := 'PRC_SUBS_0100';
+
+
+    -- Initialize Log Variables
+    pl.logger := utl.logtype.init(gv_pck ||'.'||gv_proc);
+
+    
+    gv_dyn_task := '
+    MERGE INTO '||gv_dwh_owner ||'.'||v_table_name||' A 
+    USING 
+    (
+        SELECT TO_DATE(DECODE(NVL(KT.KESME_TARIHI,0),0,NULL,KT.KESME_TARIHI),''YYYYMMDD'')  D_DATE,KT.TESISAT_NO SUBSCRIBER_ID ,KT.KESME_NO CUT_NUMBER 
+        FROM ODS_MBS_DICLE.KESME_TAKIP KT
+        WHERE EXISTS (SELECT NULL 
+                     FROM '||gv_mbs_dicle_owner ||'.'||v_src_table_01||'@'||gv_dblk_mbs||' IE
+                     WHERE IE.TESISAT_NO = KT.TESISAT_NO
+                     AND IE.EMIR_TURU = 3
+                     AND IE.GERCEKLESME_TARIHI = KT.KESME_TARIHI
+                     AND IE.EMIR_DUR = 3)
+    ) B ON (A.CUT_NUMBER = B.CUT_NUMBER AND A.SUBSCRIBER_ID = B.SUBSCRIBER_ID )
+    WHEN MATCHED THEN UPDATE SET 
+        A.CUT_STATUS = 6,
+        A.CUT_STATUS_DATE = B.D_DATE
+    WHERE A.CUT_STATUS IN (4,5)
+    ';
+
+    execute immediate gv_dyn_task;
+    
+    pl.logger.success(SQL%ROWCOUNT,gv_dyn_task);
+    
+    commit;
+    
+    exception
+      when others then
+        gv_sql_errc := sqlcode;
+        gv_sql_errm := sqlerrm;
+        pl.logger.error(gv_sql_errm, gv_dyn_task);
+        rollback;
+        raise_application_error(gv_sql_errc, gv_sql_errm);
+        
+  END;
+   
+  ------------------------------------------------------------------------------
+  --  Created By     : eTAPKAN
+  --  Creation Date  : 2017.12.06
+  --  Last Modification Date  : 2017.12.06
+  --  Procedure Name : PRC_SUBS_0050
+  --  Description    : Kesme İş Emri Var Düzenleniyor...
+  --  [Modification History]
+  ------------------------------------------------------------------------------
+ 
+  PROCEDURE PRC_SUBS_0110
+  IS
+    ----------------------------------------------------------------------------
+    v_table_name    varchar2(35) := 'SUBS0080';
+    ----------------------------------------------------------------------------
+    v_src_table_01  varchar2(30) := 'SAHA_ISEMRI';
+
+    ----------------------------------------------------------------------------
+  BEGIN
+    gv_proc := 'PRC_SUBS_0110';
+
+    -- Initialize Log Variables
+    pl.logger := utl.logtype.init(gv_pck ||'.'||gv_proc);
+
+    
+    gv_dyn_task := '
+        MERGE INTO '||gv_dwh_owner ||'.'||v_table_name||' A 
+        USING 
+        (
+            SELECT MAX(TO_DATE(DECODE(NVL(I.KAYIT_TARIHI,0),0,NULL,I.KAYIT_TARIHI),''YYYYMMDD'')) D_DATE,
+            TESISAT_NO SUBSCRIBER_ID
+            FROM '||gv_mbs_dicle_owner ||'.'||v_src_table_01||'@'||gv_dblk_mbs||'  I 
+            WHERE  EMIR_TURU=0 
+            AND EMIR_DUR IN (0,1)
+            GROUP BY TESISAT_NO 
+        ) B ON (A.SUBSCRIBER_ID = B.SUBSCRIBER_ID)
+        WHEN MATCHED THEN UPDATE SET 
+            A.CUT_STATUS = 3,
+            A.CUT_STATUS_DATE = B.D_DATE
+        WHERE  A.CUT_STATUS = 0
+    ';
+
+    execute immediate gv_dyn_task;
+    
+    pl.logger.success(SQL%ROWCOUNT,gv_dyn_task);
+    
+    commit;
+    
+    exception
+      when others then
+        gv_sql_errc := sqlcode;
+        gv_sql_errm := sqlerrm;
+        pl.logger.error(gv_sql_errm, gv_dyn_task);
+        rollback;
+        raise_application_error(gv_sql_errc, gv_sql_errm);  
+        
+  END;
+  
+    
+  ------------------------------------------------------------------------------
+  --  Created By     : eTAPKAN
+  --  Creation Date  : 2017.12.06
+  --  Last Modification Date  : 2017.12.06
+  --  Procedure Name : PRC_SUBS_0050
+  --  Description    :Geçerli Yapılmış İhbar Var Düzenleniyor...
+  --  [Modification History]
+  ------------------------------------------------------------------------------
+ 
+  PROCEDURE PRC_SUBS_0120
+  IS
+    ----------------------------------------------------------------------------
+    v_table_name    varchar2(35) := 'SUBS0080';
+    ----------------------------------------------------------------------------
+    v_src_table_01  varchar2(30) := 'DEVIR_FATURA';
+    v_src_table_02  varchar2(30) := 'MBS_FATURA';
+    v_src_table_03  varchar2(30) := 'MBS_ABONMAN_TAKSIT';
+    
+
+    ----------------------------------------------------------------------------
+  BEGIN
+    gv_proc := 'PRC_SUBS_0120';
+
+    -- Initialize Log Variables
+    pl.logger := utl.logtype.init(gv_pck ||'.'||gv_proc);
+
+    
+    gv_dyn_task := '
+            UPDATE   '||gv_dwh_owner ||'.'||v_table_name||' A 
+            SET CUT_STATUS = 2
+            WHERE A.LAST_NOTICE_DATE IS NOT NULL
+            AND A.CUT_STATUS = 0
+            AND EXISTS (
+                        SELECT NULL
+                        FROM '||gv_mbs_dicle_owner ||'.'||v_src_table_01||'@'||gv_dblk_mbs||' F
+                        WHERE F.TESISAT_NO = A.SUBSCRIBER_ID
+                        AND F.KAPATMA_TARIHI = 0
+                        AND F.FATURA_KODU != 11
+                        AND TO_DATE(DECODE(NVL(F.TAHAKKUK_TARIHI,0),0,NULL,F.TAHAKKUK_TARIHI),''YYYYMMDD'') > A.TRANSFER_DATE
+                        AND TO_DATE(DECODE(NVL(F.OKUMA_TARIHI,0),0,NULL,F.OKUMA_TARIHI),''YYYYMMDD'')  > A.TRANSFER_DATE
+                        AND TO_DATE(DECODE(NVL(F.SON_ODEME_TARIHI,0),0,NULL,F.SON_ODEME_TARIHI),''YYYYMMDD'') < A.LAST_NOTICE_DATE
+                        AND F.TOPLAM_TUTAR > 0
+                        )
+            AND NOT EXISTS 
+                        (
+                        SELECT NULL  /* Tahsilat var mı kontrolü*/
+                        FROM '||gv_ods_owner ||'.'||v_src_table_02||'
+                        WHERE TESISAT_NO = A.SUBSCRIBER_ID
+                        AND FATURA_KODU NOT IN (2,9)
+                        AND TO_DATE(DECODE(NVL(KAPATMA_TARIHI,0),0,NULL,KAPATMA_TARIHI),''YYYYMMDD'') >= A.LAST_NOTICE_DATE
+                        AND TO_DATE(DECODE(NVL(SON_ODEME_TARIHI,0),0,NULL,SON_ODEME_TARIHI),''YYYYMMDD'') < A.LAST_NOTICE_DATE
+                        )            
+            AND NOT EXISTS 
+                        (
+                        SELECT NULL 
+                        FROM '||gv_ods_owner ||'.'||v_src_table_02||'
+                        WHERE TESISAT_NO = A.SUBSCRIBER_ID
+                        AND FATURA_KODU  IN (12,13)
+                        AND TO_DATE(DECODE(NVL(KODLAMA_TARIHI,0),0,NULL,KODLAMA_TARIHI),''YYYYMMDD'') >= A.LAST_NOTICE_DATE
+                        AND TO_DATE(DECODE(NVL(SON_ODEME_TARIHI,0),0,NULL,SON_ODEME_TARIHI),''YYYYMMDD'') < A.LAST_NOTICE_DATE
+                        )            
+            AND NOT EXISTS 
+                        (
+                        SELECT NULL  
+                        FROM '||gv_ods_owner ||'.'||v_src_table_03||' 
+                        WHERE TESISAT_NO = A.SUBSCRIBER_ID
+                        AND FATURA_KODU  NOT IN (2,9)
+                        AND TO_DATE(DECODE(NVL(KAPATMA_TARIHI,0),0,NULL,KAPATMA_TARIHI),''YYYYMMDD'') >= A.LAST_NOTICE_DATE
+                        AND TO_DATE(DECODE(NVL(VADE_TARIHI,0),0,NULL,VADE_TARIHI),''YYYYMMDD'') < A.LAST_NOTICE_DATE
+                        )  
+            AND NOT EXISTS 
+                        (
+                        SELECT NULL  
+                        FROM '||gv_ods_owner ||'.'||v_src_table_03||' 
+                        WHERE TESISAT_NO = A.SUBSCRIBER_ID
+                        AND FATURA_KODU  IN (12,13)
+                        AND TO_DATE(DECODE(NVL(KODLAMA_TARIHI,0),0,NULL,KODLAMA_TARIHI),''YYYYMMDD'') >= A.LAST_NOTICE_DATE
+                        AND TO_DATE(DECODE(NVL(VADE_TARIHI,0),0,NULL,VADE_TARIHI),''YYYYMMDD'') < A.LAST_NOTICE_DATE
+                        )  
+            OR EXISTS 
+                    (  /* Borç Var mı Kontplü*/
+                      SELECT NULL
+                      FROM '||gv_mbs_dicle_owner ||'.'||v_src_table_01||'@'||gv_dblk_mbs||' 
+                      WHERE TESISAT_NO =A.SUBSCRIBER_ID
+                        AND FATURA_KODU != 11
+                        AND (TO_DATE(DECODE(NVL(TAHAKKUK_TARIHI,0),0,NULL,TAHAKKUK_TARIHI),''YYYYMMDD'')> A.TRANSFER_DATE  OR  TO_DATE(DECODE(NVL(OKUMA_TARIHI,0),0,NULL,OKUMA_TARIHI),''YYYYMMDD'') > A.TRANSFER_DATE)
+                        AND KAPATMA_TARIHI = 0
+                        AND TO_DATE(DECODE(NVL(SON_ODEME_TARIHI,0),0,NULL,SON_ODEME_TARIHI),''YYYYMMDD'')  <A.LAST_NOTICE_DATE
+                        AND TOPLAM_TUTAR > 0
+                    )
+    ';
+
+    execute immediate gv_dyn_task;
+    
+    pl.logger.success(SQL%ROWCOUNT,gv_dyn_task);
+    
+    commit;
+    
+    exception
+      when others then
+        gv_sql_errc := sqlcode;
+        gv_sql_errm := sqlerrm;
+        pl.logger.error(gv_sql_errm, gv_dyn_task);
+        rollback;
+        raise_application_error(gv_sql_errc, gv_sql_errm);
+        
+  END;
+  
+    
+  ------------------------------------------------------------------------------
+  --  Created By     : eTAPKAN
+  --  Creation Date  : 2017.12.06
+  --  Last Modification Date  : 2017.12.06
+  --  Procedure Name : PRC_SUBS_0050
+  --  Description    : Geçerli Yapılmış İhbar Var Düzenleniyor...
+  --  [Modification History]
+  ------------------------------------------------------------------------------
+ 
+  PROCEDURE PRC_SUBS_0130
+  IS
+    ----------------------------------------------------------------------------
+    v_table_name    varchar2(35) := 'SUBS0080';
+    ----------------------------------------------------------------------------
+    v_src_table_01  varchar2(30) := 'F_INVOICES_OPEN';
+
+    ----------------------------------------------------------------------------
+  BEGIN
+    gv_proc := 'PRC_SUBS_0130';
+
+    -- Initialize Log Variables
+    pl.logger := utl.logtype.init(gv_pck ||'.'||gv_proc);
+
+
+    gv_dyn_task := '
+        UPDATE  '||gv_dwh_owner ||'.'||v_table_name||' AB SET CUT_STATUS = 0
+        WHERE CUT_STATUS =2 
+        AND EXISTS
+        (
+          SELECT A.INSTALLATION_ID 
+          FROM 
+          (
+            SELECT INSTALLATION_ID, COUNT(1) SAYI
+            FROM '||gv_edw_owner ||'.'||v_src_table_01||'  
+            WHERE STATUS_TYPE_ID IN (7,8)
+            GROUP BY INSTALLATION_ID
+          ) A
+          INNER JOIN
+          (
+            SELECT INSTALLATION_ID, COUNT(*) SAYI
+            FROM '||gv_edw_owner ||'.'||v_src_table_01||'  
+            GROUP BY INSTALLATION_ID
+          ) B ON (A.INSTALLATION_ID = B.INSTALLATION_ID AND A.SAYI = B.SAYI)
+          WHERE A.INSTALLATION_ID = AB.SUBSCRIBER_ID
+        )
+        ';
+        
+    execute immediate gv_dyn_task;
+    
+    pl.logger.success(SQL%ROWCOUNT,gv_dyn_task);
+    
+    commit;
+    
+    exception
+      when others then
+        gv_sql_errc := sqlcode;
+        gv_sql_errm := sqlerrm;
+        pl.logger.error(gv_sql_errm, gv_dyn_task);
+        rollback;
+        raise_application_error(gv_sql_errc, gv_sql_errm);
+
+  END;
+  
+     
+  ------------------------------------------------------------------------------
+  --  Created By     : eTAPKAN
+  --  Creation Date  : 2017.12.06
+  --  Last Modification Date  : 2017.12.06
+  --  Procedure Name : PRC_SUBS_0050
+  --  Description    : Bekleyen İhbar Emri Var Düzenleniyor...
+  --  [Modification History]
+  ------------------------------------------------------------------------------
+ 
+  PROCEDURE PRC_SUBS_0140
+  IS
+    ----------------------------------------------------------------------------
+    v_table_name    varchar2(35) := 'SUBS0080';
+    ----------------------------------------------------------------------------
+    v_src_table_01  varchar2(30) := 'SAHA_ISEMRI';
+    ----------------------------------------------------------------------------
+    
+  BEGIN
+    gv_proc := 'PRC_SUBS_0140';
+
+    -- Initialize Log Variables
+    pl.logger := utl.logtype.init(gv_pck ||'.'||gv_proc);
+
+
+    gv_dyn_task := '
+        MERGE INTO '||gv_dwh_owner ||'.'||v_table_name||' A 
+        USING 
+        (
+            SELECT MAX(TO_DATE(DECODE(NVL(KAYIT_TARIHI,0),0,NULL,KAYIT_TARIHI),''YYYYMMDD'')) D_DATE  ,TESISAT_NO SUBSCRIBER_ID
+            FROM  '||gv_mbs_dicle_owner ||'.'||v_src_table_01||'@'||gv_dblk_mbs||' 
+            WHERE EMIR_TURU=2 
+            AND EMIR_DUR IN (0,1)
+            GROUP BY TESISAT_NO
+        ) B ON (A.SUBSCRIBER_ID = B.SUBSCRIBER_ID)
+         WHEN MATCHED THEN UPDATE SET 
+                A.CUT_STATUS = 1,
+                A.CUT_STATUS_DATE = B.D_DATE
+            WHERE  A.CUT_STATUS = 0
+        ';
+        
+        
+    execute immediate gv_dyn_task;
+    
+    
+    pl.logger.success(SQL%ROWCOUNT,gv_dyn_task);
+    
+    commit;
+    
+    exception
+      when others then
+        gv_sql_errc := sqlcode;
+        gv_sql_errm := sqlerrm;
+        pl.logger.error(gv_sql_errm, gv_dyn_task);
+        rollback;
+        raise_application_error(gv_sql_errc, gv_sql_errm);
+        
+  END;
+
+    
+    
+  ------------------------------------------------------------------------------
+  --  Created By     : eTAPKAN
+  --  Creation Date  : 2017.12.06
+  --  Last Modification Date  : 2017.12.06
+  --  Procedure Name : PRC_SUBS_0010
+  --  Description    : D_SUBSCRIBERS tablosu dolduruluyor...
+  --  [Modification History]
+  ------------------------------------------------------------------------------
+  
+  PROCEDURE PRC_SUBS_0150 
+  IS
+    ----------------------------------------------------------------------------
+    v_table_name    varchar2(35) := 'D_SUBSCRIBERS';
+    ----------------------------------------------------------------------------
+    v_src_table_01  varchar2(30) := 'SUBS0080';
+    v_src_table_02  varchar2(30) := 'BOLGELER';
+    v_src_table_03  varchar2(30) := 'ILLER';
+    v_src_table_04  varchar2(30) := 'D_MAPPINGS';
+    v_src_table_05  varchar2(30) := 'D_DEFINITIONS';
+    v_src_table_06  varchar2(30) := 'SUBS0010';
+    v_src_table_07  varchar2(30) := 'SUBS0020';
+    v_src_table_08  varchar2(30) := 'SUBS0030';
+    v_src_table_09  varchar2(30) := 'SUBS0040';
+    v_src_table_10  varchar2(30) := 'SUBS0060';
+    v_src_table_11  varchar2(30) := 'SUBS0070';
+    ----------------------------------------------------------------------------
+BEGIN
+
+    gv_proc := 'PRC_SUBS_0150';
+    
+    -- Initialize Log Variables
+    pl.logger := utl.logtype.init(gv_pck ||'.'||gv_proc);
+
+    pl.truncate_table(gv_edw_owner, v_table_name);
+
+
+    gv_dyn_task := '
+      INSERT /*+ append nologging */ INTO '|| gv_edw_owner ||'.'||v_table_name||'
+      (
+           SUBSCRIBER_ID,
+           PROVINCE_ID,
+           DISTRICT_ID,
+           NAME,
+           RATION_CARD_ID,
+           RATION_CARD_NAME,
+           PROVINCE,
+           VILLAGE_CODE,
+           VILLAGE_NAME,
+           CUTTING_NO,
+           LAST_READING_DATE,
+           CONTRACT_POWER,
+           ADDRESS,
+           AREA_CODE,
+           AREA_NAME,
+           MUNICIPALITY_CODE,
+           MUNICIPALITY_NAME,
+           TARIFF_CODE,
+           INSTALLED_POWER,
+           TRANSFORMER_POWER,
+           METER_NUMBER,
+           METER_MULTIPLIER,
+           METER_MODEL,
+           SUBSCRIBER_GROUP_CODE,
+           SUBSCRIBER_GROUP_NAME,
+           TARIFF_NAME,
+           UNIPED_CODE,
+           UNIPED_NAME,
+           G_SUBSCRIBER_GROUP_NAME,
+           VILLAGE_STATU,
+           ACCOUNT_CODE,
+           ACCOUNT_NAME,
+           CONTRAC_NUMBER,
+           CUT_STATUS,
+           CUT_STATUS_NAME,
+           CUT_STATUS_DATE,
+           TRANSFER_DATE,
+           LAST_NOTICE_DATE,
+           LAST_INVOICE_DATE,
+           CUT_NUMBER,
+           ENDEX_STATUS,
+           ENDEX_STATUS_NAME,
+           ENDEX_STATUS_REAL_DATE,
+           ACTIVE_SUBSCRIBER,
+           SUBSCRIBER_STATUS_NAME,
+           CONTRACT_START_DATE,
+           PHONE,
+           PHONE_2,
+           MOBILE_PHONE,
+           TC_IDENTITY_NUMBER,
+           TAX_NUMBER,
+           AVG_CONSUMPTION,
+           LAST_METER_ADD_DATE,
+           INTERIOR_DOOR_NUMBER,
+           TRANSFORMER_NAME,
+           POLE_BOX_NUMBER,
+           LATITUDE,
+           LONGITUDE,
+           BUILDING_NAME,
+           BUILDING_TYPE,
+           DOOR_NUMBER,
+           SITE_NAME,
+           FLOOR_COUNT,
+           FLAT_COUNT,
+           TRANSFORMER_NUMBER,
+           NEIGHBORHOOD,
+           CBS_PROVINCE,
+           CBS_DISTRICT,
+           STREET,
+           STREET_CODE,
+           WAY_ID,
+           NEW_TRASFORMER_CODE,
+           BUILDING_ID,
+           TRANSFORMER_ID,
+           POLE_ID,
+           FEEDER_ID,
+           OSOS_STATUS,
+           OG_STATUS,
+           SUBSCRIBER_KIND,
+           ADDRESS_TELL,
+           CONNECTION_STATUS,
+           PERSON_STATE,
+           CONTRACT_TYPE,
+           REAKTIF_MUAF
+      )
+     SELECT 
+         A.SUBSCRIBER_ID,
+         I.IL_KODU PROVINCE_ID, 
+         DF.D_ID DISTRICT_ID,
+         A.NAME, 
+         A.RATION_CARD_ID, 
+         A.RATION_CARD_NAME, 
+         TRIM(I.IL_ADI) PROVINCE,
+         A.VILLAGE_CODE, 
+         A.VILLAGE_NAME, 
+         A.CUTTING_NO, 
+         A.LAST_READING_DATE, 
+         A.CONTRACT_POWER, 
+         A.ADDRESS, 
+         B.BOLGE_KODU AREA_CODE,
+         TRIM(B.BOLGE_ADI) AREA_NAME,
+         A.MUNICIPALITY_CODE, 
+         A.MUNICIPALITY_NAME, 
+         A.TARIFF_CODE, 
+         A.INSTALLED_POWER, 
+         A.TRANSFORMER_POWER, 
+         A.METER_NUMBER, 
+         A.METER_MULTIPLIER, 
+         A.METER_MODEL, 
+         A.SUBSCRIBER_GROUP_CODE, 
+         A.SUBSCRIBER_GROUP_NAME, 
+         A.TARIFF_NAME, 
+         A.UNIPED_CODE, 
+         A.UNIPED_NAME, 
+         A.G_SUBSCRIBER_GROUP_NAME, 
+         A.VILLAGE_STATU, 
+         A.ACCOUNT_CODE, 
+         A.ACCOUNT_NAME, 
+         A.CONTRAC_NUMBER,
+         A.CUT_STATUS,
+         A.CUT_STATUS_NAME, 
+         A.CUT_STATUS_DATE, 
+         A.TRANSFER_DATE, 
+         A.LAST_NOTICE_DATE, 
+         ST.LAST_INVOICE_DATE,
+         A.CUT_NUMBER, 
+         EN.NOT_KODU ENDEX_STATUS, 
+         DF2.D_DESCRIPTION ENDEX_STATUS_NAME,
+         EN.OKUMA_TARIHI ENDEX_STATUS_REAL_DATE,
+         A.ACTIVE_SUBSCRIBER, 
+         DF1.D_DESCRIPTION SUBSCRIBER_STATUS_NAME,
+         A.CONTRACT_START_DATE,
+         A.PHONE, 
+         A.PHONE_2, 
+         A.MOBILE_PHONE, 
+         A.TC_IDENTITY_NUMBER, 
+         A.TAX_NUMBER, 
+         A.AVG_CONSUMPTION, 
+         A.LAST_METER_ADD_DATE,
+         CBS.INTERIOR_DOOR_NUMBER,
+         CBS.TRANSFORMER_NAME,
+         CBS.POLE_BOX_NUMBER,
+         CBS.LATITUDE,
+         CBS.LONGITUDE,
+         CBS.BUILDING_NAME,
+         CBS.BUILDING_TYPE,
+         CBS.DOOR_NUMBER,
+         CBS.SITE_NAME,
+         CBS.FLOOR_COUNT,
+         CBS.FLAT_COUNT,
+         CBS.TRANSFORMER_NUMBER,
+         CBS.NEIGHBORHOOD,
+         CBS.CBS_PROVINCE,
+         CBS.CBS_DISTRICT,
+         CBS.STREET,
+         CBS.STREET_CODE,
+         CBS.WAY_ID,
+         CF.NEW_TRASFORMER_CODE,
+         CBS.BUILDING_ID,
+         CF.TRANSFORMER_ID,
+         P.POLE_ID,
+         CF.FEEDER_ID,
+         A.OSOS_STATUS, 
+         A.OG_STATUS, 
+         A.SUBSCRIBER_KIND, 
+         A.ADDRESS_TELL, 
+         A.CONNECTION_STATUS, 
+         A.PERSON_STATE, 
+         A.CONTRACT_TYPE, 
+         A.REAKTIF_MUAF
+     FROM '||gv_dwh_owner ||'.'||v_src_table_01||' A
+     LEFT JOIN '||gv_ods_dicle_owner ||'.'||v_src_table_02||' B   ON (B.BOLGE_KODU = A.AREA_CODE   )
+     LEFT JOIN '||gv_ods_dicle_owner ||'.'||v_src_table_03||' I   ON (I.IL_KODU = B.IL_KODU)
+     LEFT JOIN '||gv_edw_owner ||'.'||v_src_table_04||' MP        ON (MP.SOURCE_VALUE = A.K_AREA_CODE AND MP.SOURCE_APPLICATION_ID = 2 AND MP.SOURCE_DATA_TYPE=''BOLGE_KODU'' AND D_DEFINITION_CODE =''DISTRICT'')
+     LEFT JOIN '||gv_edw_owner ||'.'||v_src_table_05||' DF        ON (DF.D_CODE =''DISTRICT'' AND DF.D_ID = MP.D_DEFINITION_ID)
+ --  LEFT JOIN '||gv_dwh_owner ||'.'||v_src_table_06||' KI        ON (A.SUBSCRIBER_ID = KI.TESISAT_NO)
+     LEFT JOIN '||gv_dwh_owner ||'.'||v_src_table_07||' ST        ON (A.SUBSCRIBER_ID = ST.TESISAT_NO)
+     LEFT JOIN '||gv_dwh_owner ||'.'||v_src_table_08||' EN        ON (A.SUBSCRIBER_ID = EN.TESISAT_NO)
+     LEFT JOIN '||gv_dwh_owner ||'.'||v_src_table_09||' CBS       ON (A.SUBSCRIBER_ID = CBS.SUBSCRIBER_ID)
+     LEFT JOIN '||gv_dwh_owner ||'.'||v_src_table_10||' CF        ON (A.SUBSCRIBER_ID = CF.SUBSCRIBER_ID )
+     LEFT JOIN '||gv_dwh_owner ||'.'||v_src_table_11||' P         ON (A.SUBSCRIBER_ID = P.SUBSCRIBER_ID)
+     LEFT JOIN '||gv_edw_owner ||'.'||v_src_table_05||' DF1       ON (DF1.D_CODE = ''GT_ABONE_DURUM'' AND DF1.D_ID = A.ACTIVE_SUBSCRIBER)
+     LEFT JOIN '||gv_edw_owner ||'.'||v_src_table_05||' DF2       ON (DF2.D_CODE = ''GT_END_NOT_ADI'' AND DF2.D_ID = EN.NOT_KODU)
+    ';
+
+    execute immediate gv_dyn_task;
+   
+    
+    pl.logger.success(SQL%ROWCOUNT,gv_dyn_task);
+    
+    commit;
+    
+    exception
+      when others then
+        gv_sql_errc := sqlcode;
+        gv_sql_errm := sqlerrm;
+        pl.logger.error(gv_sql_errm, gv_dyn_task);
+        rollback;
+        raise_application_error(gv_sql_errc, gv_sql_errm);
+        
+  END;
+  
+  
+   
+  ------------------------------------------------------------------------------
+  --  Created By     : eTAPKAN
+  --  Creation Date  : 2017.12.06
+  --  Last Modification Date  : 2017.12.06
+  --  Procedure Name : PRC_SUBS_0050
+  --  Description    : Raporlarda kullanılmak üzere güncelleme tarihi Düzenleniyor...
+  --  [Modification History]
+  ------------------------------------------------------------------------------
+ 
+  PROCEDURE PRC_SUBS_0160
+  IS
+    ----------------------------------------------------------------------------
+    v_table_name    varchar2(35) := 'REPORT_LAST_UPDATE_DATE';
+    ----------------------------------------------------------------------------
+   
+    
+  BEGIN
+    gv_proc := 'PRC_SUBS_0160';
+
+    -- Initialize Log Variables
+    pl.logger := utl.logtype.init(gv_pck ||'.'||gv_proc);
+
+
+    gv_dyn_task := 'UPDATE  '||gv_dm_owner ||'.'||v_table_name||'  SET UPDATE_DATE = SYSDATE  WHERE REPORT_NAME = ''SUBSCRIBERS'' AND ID =121';
+        
+        
+    execute immediate gv_dyn_task;
+    
+    
+    pl.logger.success(SQL%ROWCOUNT,gv_dyn_task);
+    
+    commit;
+    
+    exception
+      when others then
+        gv_sql_errc := sqlcode;
+        gv_sql_errm := sqlerrm;
+        pl.logger.error(gv_sql_errm, gv_dyn_task);
+        rollback;
+        raise_application_error(gv_sql_errc, gv_sql_errm);
+
+  END;
+  
+  
+END;
+/
